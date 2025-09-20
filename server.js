@@ -7,7 +7,6 @@ const PORT = process.env.PORT || 3000;
 const HISTORY_API_URL = 'https://jjhvc.onrender.com/api/taixiu/ws';
 let cachedConfidence = null;
 let cachedSession = null;
-const CACHE_LIFETIME = 15000; // 15 giây
 
 // --- THƯ VIỆN 60 LOẠI CẦU VÀ TRỌNG SỐ ---
 const MAU_CAU_LIBRARY = {
@@ -42,17 +41,22 @@ const MAU_CAU_LIBRARY = {
 };
 
 // --- HÀM HỖ TRỢ ---
-function getRandomConfidence(weight) {
-  // Cập nhật độ tin cậy dựa trên trọng số
+function getRandomConfidence(weight, isHighConfidence = false) {
   let baseConfidence = 50;
-  if (weight > 0) baseConfidence = 60 + Math.min(weight * 2, 30); // Tăng 2% mỗi điểm trọng số, tối đa 90%
-  if (weight < 0) baseConfidence = 40 + Math.max(weight * 2, -15); // Giảm 2% mỗi điểm trọng số, tối thiểu 25%
+  if (isHighConfidence) {
+    baseConfidence = 75 + Math.random() * 15; // 75-90%
+  } else if (weight > 0) {
+    baseConfidence = 60 + Math.min(weight * 2, 30);
+  } else if (weight < 0) {
+    baseConfidence = 40 + Math.max(weight * 2, -15);
+  } else {
+    baseConfidence = 45 + Math.random() * 10; // 45-55%
+  }
 
-  const randomOffset = Math.random() * 5 - 2.5; // +- 2.5%
+  const randomOffset = Math.random() * 2 - 1; // +- 1%
   return (baseConfidence + randomOffset).toFixed(2) + "%";
 }
 
-// Hàm dự đoán dựa trên tổng xúc xắc (dự đoán cơ sở)
 function getBasePrediction(history) {
   if (!history || history.length === 0) return null;
 
@@ -74,7 +78,6 @@ function getBasePrediction(history) {
   return counts["Tài"] >= counts["Xỉu"] ? "Tài" : "Xỉu";
 }
 
-// Hàm phân tích cầu và tính trọng số
 function analyzeMauCau(cauHistory) {
   let totalWeight = 0;
   const recentHistory = cauHistory.join('');
@@ -105,7 +108,11 @@ app.get('/api/lxk', async (req, res) => {
     const currentSession = Number(currentData.Phien);
     const nextSession = currentSession + 1;
 
-    // Lấy 15 kết quả gần nhất để phân tích cầu
+    if (cachedSession !== currentSession) {
+      cachedSession = currentSession;
+      cachedConfidence = null; // Reset cache
+    }
+
     const cauHistory = data.slice(0, 15).map(d => d.Ket_qua === "Tài" ? "T" : "X");
     
     // Bước 1: Dự đoán cơ sở
@@ -114,25 +121,27 @@ app.get('/api/lxk', async (req, res) => {
     // Bước 2: Phân tích cầu và tính trọng số
     const totalWeight = analyzeMauCau(cauHistory);
     
-    // Bước 3: Điều chỉnh dự đoán dựa trên trọng số
-    let finalPrediction = basePrediction;
-    let explanation = "Dựa trên tổng xúc xắc và phân tích cầu.";
+    // Bước 3: Đưa ra quyết định cuối cùng dựa trên trọng số
+    let finalPrediction;
+    let explanation;
+    let confidence;
 
     if (totalWeight > 5) {
-      // Cầu đẹp, giữ nguyên dự đoán
-      explanation = "Cầu đẹp, xu hướng ổn định. Giữ nguyên dự đoán.";
+      finalPrediction = basePrediction;
+      explanation = "Cầu đẹp, xu hướng ổn định. Nên vào tiền.";
+      confidence = getRandomConfidence(totalWeight, true);
     } else if (totalWeight < -5) {
-      // Cầu xấu, đảo ngược dự đoán
       finalPrediction = basePrediction === "Tài" ? "Xỉu" : "Tài";
-      explanation = "Cầu xấu, xu hướng lộn xộn. Đảo ngược dự đoán.";
+      explanation = "Cầu đang gãy! Đảo ngược dự đoán.";
+      confidence = getRandomConfidence(totalWeight);
     } else {
-      explanation = "Không có xu hướng cầu rõ ràng. Dựa vào dự đoán cơ sở.";
+      finalPrediction = "Nên dừng lại";
+      explanation = "Cầu không rõ ràng, tiềm ẩn rủi ro. Nên bỏ qua ván này để bảo toàn vốn.";
+      confidence = "---";
     }
 
-    // Cập nhật độ tin cậy và phiên
-    if (cachedSession !== currentSession) {
-      cachedSession = currentSession;
-      cachedConfidence = getRandomConfidence(totalWeight);
+    if (!cachedConfidence) {
+      cachedConfidence = confidence;
     }
 
     res.json({
@@ -147,7 +156,6 @@ app.get('/api/lxk', async (req, res) => {
       giai_thich: explanation
     });
 
-    // Log để debug
     console.log(`[LOG] Phiên ${currentSession} -> ${nextSession} | Cầu: ${cauHistory.join('')} | Trọng số: ${totalWeight} | Dự đoán: ${finalPrediction} (${cachedConfidence})`);
 
   } catch (err) {
@@ -157,7 +165,7 @@ app.get('/api/lxk', async (req, res) => {
       error: "Lỗi hệ thống hoặc không thể lấy dữ liệu",
       du_doan: "Không thể dự đoán",
       do_tin_cay: "0%",
-      giai_thich: "bú cu m giờ"
+      giai_thich: "bú cu lồn kiệt"
     });
   }
 });
