@@ -7,38 +7,56 @@ const PORT = process.env.PORT || 3000;
 const HISTORY_API_URL = 'https://jjhvc.onrender.com/api/taixiu/ws';
 let cachedConfidence = null;
 let cachedSession = null;
+const CACHE_LIFETIME = 15000; // 15 giây
 
-// --- MẪU CẦU TT/XX ---
-const mau_cau_xau = [
-  "TXXTX","TXTXT","XXTXX","XTXTX","TTXTX",
-  "XTTXT","TXXTT","TXTTX","XXTTX","XTXTT",
-  "TXTXX","XXTXT","TTXXT","TXTTT","XTXTX",
-  "XTXXT","XTTTX","TTXTT","XTXTT","TXXTX"
-];
+// --- THƯ VIỆN 60 LOẠI CẦU VÀ TRỌNG SỐ ---
+const MAU_CAU_LIBRARY = {
+  // Cầu bệt (trọng số cao)
+  "TTTT": 3, "TTTTT": 4, "TTTTTT": 5,
+  "XXXX": 3, "XXXXX": 4, "XXXXXX": 5,
 
-const mau_cau_dep = [
-  "TTTTT","XXXXX","TTTXX","XXTTT","TXTXX",
-  "TTTXT","XTTTX","TXXXT","XXTXX","TXTTT",
-  "XTTTT","TTXTX","TXXTX","TXTXT","XTXTX",
-  "TTTXT","XTTXT","TXTXT","XXTXX","TXXXX"
-];
+  // Cầu đảo (1-1, 2-2,...)
+  "TXTXT": 2, "XTXTX": 2,
+  "TTXXTT": 3, "XXTTXX": 3,
+  "TTTXXX": 4, "XXXTTT": 4,
+  "TTTTXXXX": 5, "XXXXTTTT": 5,
+  "TTTTTXXXXX": 6, "XXXXXTTTTT": 6,
+
+  // Cầu xen kẽ phức tạp
+  "TXXTXX": 2, "XTTXTT": 2, "TXXTXT": 1, "XTTXTTX": 1,
+  "TTXTXT": 1, "XXTXTX": 1, "TXTTXX": -1, "XTTXTT": -1,
+  "TTXTT": 1, "XXTXX": 1, "TTXXT": -1, "XXTTX": -1,
+  "TXXTT": -2, "XTTXX": -2,
+
+  // Cầu "dây" hoặc "gián đoạn"
+  "TTXT": -1, "TXXT": -1, "XXTX": -1,
+  "TXXXT": -2, "TTXXT": -2, "TTTXXT": -3,
+  "XXTTX": -2, "XXXTTX": -3, "TTTX": -1, "XXXT": -1,
+
+  // Cầu "lộn xộn" hoặc "không rõ ràng" (trọng số âm)
+  "TXXTX": -3, "TXTTX": -3, "XXTXX": -3, "XTXTX": -3,
+  "TTXTX": -2, "XTTXT": -2, "TXXTT": -2, "TXTTT": -2,
+  "XXTTX": -3, "XTXTT": -3, "TXTXX": -3, "XXTXT": -3,
+  "TTXXT": -2, "TXXXX": -4, "XTTTT": -4, "TXTTX": -3,
+  "XTXXT": -3, "XTTTX": -3, "TTXTT": -2, "XTXTT": -3
+};
 
 // --- HÀM HỖ TRỢ ---
-function getRandomConfidence() {
-  return (Math.random() * (90 - 40) + 40).toFixed(2) + "%";
+function getRandomConfidence(weight) {
+  // Cập nhật độ tin cậy dựa trên trọng số
+  let baseConfidence = 50;
+  if (weight > 0) baseConfidence = 60 + Math.min(weight * 2, 30); // Tăng 2% mỗi điểm trọng số, tối đa 90%
+  if (weight < 0) baseConfidence = 40 + Math.max(weight * 2, -15); // Giảm 2% mỗi điểm trọng số, tối thiểu 25%
+
+  const randomOffset = Math.random() * 5 - 2.5; // +- 2.5%
+  return (baseConfidence + randomOffset).toFixed(2) + "%";
 }
-function isCauXau(cauStr) { return mau_cau_xau.includes(cauStr); }
-function isCauDep(cauStr) { return mau_cau_dep.includes(cauStr); }
 
-// Dự đoán phiên tiếp theo
-function predictNext(history, cau) {
-  if (!history || history.length === 0) return "Đợi thêm dữ liệu";
+// Hàm dự đoán dựa trên tổng xúc xắc (dự đoán cơ sở)
+function getBasePrediction(history) {
+  if (!history || history.length === 0) return null;
 
-  const lastDice = [
-    history[0].Xuc_xac_1,
-    history[0].Xuc_xac_2,
-    history[0].Xuc_xac_3
-  ];
+  const lastDice = [history[0].Xuc_xac_1, history[0].Xuc_xac_2, history[0].Xuc_xac_3];
   const total = lastDice.reduce((a, b) => a + b, 0);
 
   let resultList = [];
@@ -51,18 +69,26 @@ function predictNext(history, cau) {
     for (let j = 0; j < weights[i] * 10; j++) resultList.push(val);
   }
 
-  // Đếm tần suất
   let counts = { "Tài": 0, "Xỉu": 0 };
   resultList.forEach(v => counts[v]++);
-  let pred = counts["Tài"] >= counts["Xỉu"] ? "Tài" : "Xỉu";
+  return counts["Tài"] >= counts["Xỉu"] ? "Tài" : "Xỉu";
+}
 
-  // Xử lý cầu TT/XX
-  const cau5 = cau.slice(-5).join('');
-  if (isCauXau(cau5)) {
-    pred = pred === "Tài" ? "Xỉu" : "Tài";
+// Hàm phân tích cầu và tính trọng số
+function analyzeMauCau(cauHistory) {
+  let totalWeight = 0;
+  const recentHistory = cauHistory.join('');
+
+  for (const pattern in MAU_CAU_LIBRARY) {
+    let startIndex = 0;
+    while (true) {
+      const foundIndex = recentHistory.indexOf(pattern, startIndex);
+      if (foundIndex === -1) break;
+      totalWeight += MAU_CAU_LIBRARY[pattern];
+      startIndex = foundIndex + 1;
+    }
   }
-
-  return pred;
+  return totalWeight;
 }
 
 // --- ENDPOINT DỰ ĐOÁN ---
@@ -76,19 +102,38 @@ app.get('/api/lxk', async (req, res) => {
     const data = Array.isArray(response.data) ? response.data : [response.data];
     const currentData = data[0];
 
-    // Ép kiểu số để +1 không bị nối chuỗi
     const currentSession = Number(currentData.Phien);
     const nextSession = currentSession + 1;
 
-    if (cachedSession !== currentSession) {
-      cachedSession = currentSession;
-      cachedConfidence = getRandomConfidence();
+    // Lấy 15 kết quả gần nhất để phân tích cầu
+    const cauHistory = data.slice(0, 15).map(d => d.Ket_qua === "Tài" ? "T" : "X");
+    
+    // Bước 1: Dự đoán cơ sở
+    const basePrediction = getBasePrediction(data);
+    
+    // Bước 2: Phân tích cầu và tính trọng số
+    const totalWeight = analyzeMauCau(cauHistory);
+    
+    // Bước 3: Điều chỉnh dự đoán dựa trên trọng số
+    let finalPrediction = basePrediction;
+    let explanation = "Dựa trên tổng xúc xắc và phân tích cầu.";
+
+    if (totalWeight > 5) {
+      // Cầu đẹp, giữ nguyên dự đoán
+      explanation = "Cầu đẹp, xu hướng ổn định. Giữ nguyên dự đoán.";
+    } else if (totalWeight < -5) {
+      // Cầu xấu, đảo ngược dự đoán
+      finalPrediction = basePrediction === "Tài" ? "Xỉu" : "Tài";
+      explanation = "Cầu xấu, xu hướng lộn xộn. Đảo ngược dự đoán.";
+    } else {
+      explanation = "Không có xu hướng cầu rõ ràng. Dựa vào dự đoán cơ sở.";
     }
 
-    // 5 cầu gần nhất
-    let cau = data.slice(0, 5).map(d => d.Ket_qua === "Tài" ? "T" : "X");
-
-    const du_doan = predictNext(data, cau);
+    // Cập nhật độ tin cậy và phiên
+    if (cachedSession !== currentSession) {
+      cachedSession = currentSession;
+      cachedConfidence = getRandomConfidence(totalWeight);
+    }
 
     res.json({
       id: "@cskhtoollxk",
@@ -97,13 +142,13 @@ app.get('/api/lxk', async (req, res) => {
       tong_xuc_xac: currentData.Tong,
       ket_qua: currentData.Ket_qua,
       phien_sau: nextSession,
-      du_doan,
+      du_doan: finalPrediction,
       do_tin_cay: cachedConfidence,
-      giai_thich: "trần bình an đẹp trai"
+      giai_thich: explanation
     });
 
-    // Log ra console để debug Render
-    console.log(`[LOG] Phiên ${currentSession} -> ${nextSession} | KQ: ${currentData.Ket_qua} | Dự đoán: ${du_doan} (${cachedConfidence})`);
+    // Log để debug
+    console.log(`[LOG] Phiên ${currentSession} -> ${nextSession} | Cầu: ${cauHistory.join('')} | Trọng số: ${totalWeight} | Dự đoán: ${finalPrediction} (${cachedConfidence})`);
 
   } catch (err) {
     console.error(err.message);
@@ -118,13 +163,8 @@ app.get('/api/lxk', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.send("Chào mừng đến API dự đoán Tài Xỉu! Truy cập /api/taixiu/du_doan_68gb để xem dự đoán.");
+  res.send("Chào mừng đến API dự đoán Tài Xỉu!");
 });
 
 app.listen(PORT, () => console.log(`🚀 Server đang chạy trên cổng ${PORT}`));
-
-                                 
-
-
-
-
+    
