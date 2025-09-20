@@ -157,7 +157,7 @@ app.get('/api/lxk', async (req, res) => {
       error: "Lỗi hệ thống hoặc không thể lấy dữ liệu",
       du_doan: "Không thể dự đoán",
       do_tin_cay: "0%",
-      giai_thich: "Đang chờ dữ liệu lịch sử"
+      giai_thich: "bú cu m giờ"
     });
   }
 });
@@ -167,4 +167,4 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`🚀 Server đang chạy trên cổng ${PORT}`));
-    
+  
