@@ -41,20 +41,16 @@ const MAU_CAU_LIBRARY = {
 };
 
 // --- HÀM HỖ TRỢ ---
-function getRandomConfidence(weight, isHighConfidence = false) {
+function getConfidence(weight) {
   let baseConfidence = 50;
-  if (isHighConfidence) {
-    baseConfidence = 75 + Math.random() * 15; // 75-90%
-  } else if (weight > 0) {
-    baseConfidence = 60 + Math.min(weight * 2, 30);
-  } else if (weight < 0) {
-    baseConfidence = 40 + Math.max(weight * 2, -15);
+  if (weight > 5) {
+    baseConfidence = 75 + Math.min(weight * 2, 15); // Cầu đẹp, độ tin cậy cao
+  } else if (weight < -5) {
+    baseConfidence = 25 + Math.max(weight * 2, -15); // Cầu xấu, độ tin cậy thấp
   } else {
-    baseConfidence = 45 + Math.random() * 10; // 45-55%
+    baseConfidence = 50 + Math.random() * 10 - 5; // Cầu trung lập, độ tin cậy 45-55%
   }
-
-  const randomOffset = Math.random() * 2 - 1; // +- 1%
-  return (baseConfidence + randomOffset).toFixed(2) + "%";
+  return baseConfidence.toFixed(2) + "%";
 }
 
 function getBasePrediction(history) {
@@ -110,7 +106,7 @@ app.get('/api/lxk', async (req, res) => {
 
     if (cachedSession !== currentSession) {
       cachedSession = currentSession;
-      cachedConfidence = null; // Reset cache
+      cachedConfidence = null;
     }
 
     const cauHistory = data.slice(0, 15).map(d => d.Ket_qua === "Tài" ? "T" : "X");
@@ -124,24 +120,20 @@ app.get('/api/lxk', async (req, res) => {
     // Bước 3: Đưa ra quyết định cuối cùng dựa trên trọng số
     let finalPrediction;
     let explanation;
-    let confidence;
-
+    
     if (totalWeight > 5) {
       finalPrediction = basePrediction;
       explanation = "Cầu đẹp, xu hướng ổn định. Nên vào tiền.";
-      confidence = getRandomConfidence(totalWeight, true);
     } else if (totalWeight < -5) {
       finalPrediction = basePrediction === "Tài" ? "Xỉu" : "Tài";
       explanation = "Cầu đang gãy! Đảo ngược dự đoán.";
-      confidence = getRandomConfidence(totalWeight);
     } else {
-      finalPrediction = "Nên dừng lại";
-      explanation = "Cầu không rõ ràng, tiềm ẩn rủi ro. Nên bỏ qua ván này để bảo toàn vốn.";
-      confidence = "---";
+      finalPrediction = basePrediction;
+      explanation = "Cầu không rõ ràng, tiềm ẩn rủi ro.";
     }
 
     if (!cachedConfidence) {
-      cachedConfidence = confidence;
+      cachedConfidence = getConfidence(totalWeight);
     }
 
     res.json({
@@ -165,7 +157,7 @@ app.get('/api/lxk', async (req, res) => {
       error: "Lỗi hệ thống hoặc không thể lấy dữ liệu",
       du_doan: "Không thể dự đoán",
       do_tin_cay: "0%",
-      giai_thich: "bú cu lồn kiệt"
+      giai_thich: "địt mẹ tk kiệt l"
     });
   }
 });
@@ -175,4 +167,4 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`🚀 Server đang chạy trên cổng ${PORT}`));
-  
+    
