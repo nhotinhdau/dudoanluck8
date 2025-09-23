@@ -6,34 +6,40 @@ const PORT = process.env.PORT || 3000;
 // --- CẤU HÌNH ---
 const HISTORY_API_URL = 'https://kbvvv.onrender.com/api/taixiu/ws';
 
-// --- THUẬT TOÁN DỰ ĐOÁN THEO YÊU CẦU CỦA BẠN ---
+// --- THUẬT TOÁN DỰ ĐOÁN THEO YÊU CẦU ---
 /**
  * Thuật toán dự đoán dựa trên cầu mẫu và chu kỳ toán học.
  * @param {number} index - Chỉ số phiên hiện tại.
  * @returns {string} - Kết quả dự đoán ("Tài" hoặc "Xỉu").
  */
 function vipPredictTX(index) {
-  // ===== 1) Cầu mẫu (pattern) =====
   const patterns = [
-    ["Tài", "Tài", "Xỉu", "Xỉu"], // TTXX
-    ["Tài", "Xỉu", "Tài", "Xỉu"], // TXTX
-    ["Tài", "Tài", "Tài", "Xỉu"], // TTTX
-    ["Xỉu", "Xỉu", "Tài", "Tài"], // XXTT
+    ["Tài", "Tài", "Xỉu", "Xỉu"],
+    ["Tài", "Xỉu", "Tài", "Xỉu"],
+    ["Tài", "Tài", "Tài", "Xỉu"],
+    ["Xỉu", "Xỉu", "Tài", "Tài"],
   ];
   const patternIndex = Math.floor(index / 8) % patterns.length;
   const pattern = patterns[patternIndex];
   const patGuess = pattern[index % pattern.length];
 
-  // ===== 2) Chu kỳ toán học (sin/cos) =====
   const val = Math.sin(index / 2) + Math.cos(index / 3);
   const mathGuess = val >= 0 ? "Tài" : "Xỉu";
 
-  // ===== 3) Kết hợp cầu + chu kỳ toán học =====
-  // Nếu 2 dự đoán trùng nhau → chọn luôn
   if (patGuess === mathGuess) return patGuess;
-
-  // Nếu khác nhau → ưu tiên cầu, nhưng thỉnh thoảng chèn toán học
   return (index % 5 === 0) ? mathGuess : patGuess;
+}
+
+// --- HÀM TẠO ĐỘ TIN CẬY NGẪU NHIÊN ---
+/**
+ * Tạo một giá trị độ tin cậy ngẫu nhiên từ 65.0% đến 95.0%.
+ * @returns {string} - Giá trị độ tin cậy dưới dạng chuỗi có ký hiệu %.
+ */
+function getRandomConfidence() {
+  const min = 65.0;
+  const max = 95.0;
+  const confidence = Math.random() * (max - min) + min;
+  return confidence.toFixed(1) + "%";
 }
 
 // --- ENDPOINT DỰ ĐOÁN ---
@@ -44,10 +50,13 @@ app.get('/api/2k15', async (req, res) => {
     if (!data || data.length === 0) throw new Error("Không có dữ liệu");
 
     const currentData = data[0];
-    const nextSession = currentData.Phien + 1;
     
-    // Sử dụng thuật toán của bạn với chỉ số phiên hiện tại
-    const prediction = vipPredictTX(currentData.Phien);
+    // Sửa lỗi ở đây: Chuyển đổi phien_truoc thành số nguyên trước khi cộng
+    const phienTruocInt = parseInt(currentData.Phien);
+    const nextSession = phienTruocInt + 1;
+
+    const prediction = vipPredictTX(nextSession);
+    const confidence = getRandomConfidence();
 
     res.json({
       id: "@cskhtoollxk",
@@ -55,10 +64,10 @@ app.get('/api/2k15', async (req, res) => {
       xuc_xac: [currentData.Xuc_xac_1, currentData.Xuc_xac_2, currentData.Xuc_xac_3],
       tong_xuc_xac: currentData.Tong,
       ket_qua: currentData.Ket_qua,
-      phien_sau: nextSession,
+      phien_sau: nextSession, // nextSession giờ là kiểu số
       du_doan: prediction,
-      do_tin_cay: "50.0%", // Đặt mặc định vì thuật toán không có cơ sở xác suất
-      giai_thich: "địt mẹ tk huy phùng"
+      do_tin_cay: confidence,
+      giai_thich: "dmmmm"
     });
 
   } catch (err) {
@@ -78,4 +87,4 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`Server đang chạy trên cổng ${PORT}`));
-  
+    
